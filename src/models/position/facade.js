@@ -350,3 +350,5 @@ module.exports = {
   getByNameAndCurrency,
   getAllByNameAndCurrency
 }
+
+module.exports = require('../../lib/SeriesTool').mangleExports('PositionFacade', module.exports)

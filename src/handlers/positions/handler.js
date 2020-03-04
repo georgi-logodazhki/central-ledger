@@ -54,6 +54,10 @@ const decodePayload = require('@mojaloop/central-services-shared').Util.Streamin
 const decodeMessages = require('@mojaloop/central-services-shared').Util.StreamingProtocol.decodeMessages
 const ErrorHandler = require('@mojaloop/central-services-error-handling')
 
+const { performance } = require('perf_hooks')
+const { SeriesTool } = require('../../lib/SeriesTool')
+const timingsPositions = new SeriesTool('posititions')
+
 const location = { module: 'PositionHandler', method: '', path: '' } // var object used as pointer
 
 const consumerCommit = true
@@ -75,6 +79,7 @@ const fromSwitch = true
  * @returns {object} - Returns a boolean: true if successful, or throws and error if failed
  */
 const positions = async (error, messages) => {
+  const tick = performance.now()
   const histTimerEnd = Metrics.getHistogram(
     'transfer_position',
     'Consume a prepare transfer message from the kafka topic and process it accordingly',
@@ -144,6 +149,9 @@ const positions = async (error, messages) => {
           Logger.info(Utility.breadcrumb(location, `payer--${actionLetter}1`))
           await Kafka.proceed(Config.KAFKA_CONFIG, params, { consumerCommit, eventDetail })
           histTimerEnd({ success: true, fspId: Config.INSTRUMENTATION_METRICS_LABELS.fspId, action })
+          const toe = performance.now()
+          timingsPositions.dataPoints.push(toe - tick)
+          timingsPositions.triggerDisplay()
           return true
         } else {
           Logger.info(Utility.breadcrumb(location, `payerNotifyInsufficientLiquidity--${actionLetter}2`))

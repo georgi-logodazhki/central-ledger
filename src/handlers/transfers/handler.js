@@ -79,6 +79,21 @@ const consumerCommit = false
 const fromSwitch = true
 const toDestination = true
 
+const { performance } = require('perf_hooks')
+const { SeriesTool } = require('../../lib/SeriesTool')
+const timingsPrepare = new SeriesTool('prepare')
+
+
+const timingsPrepareBeforeDuplicateCheck = new SeriesTool('prepare::duplicateCheck')
+const timingsPrepareBeforeMainIf = new SeriesTool('prepare::beforeMainIf')
+const timingsPrepareBeforeValidation = new SeriesTool('prepare::beforeValidation')
+const timingsPrepareValidationPassed = new SeriesTool('prepare::validationPassed')
+const timingsPrepareValidationPassedSent = new SeriesTool('prepare::validationPassedSent')
+const timingsPrepareValidationBeforeKafka = new SeriesTool('prepare::beforeKafka')
+
+
+
+
 /**
  * @function TransferPrepareHandler
  *
@@ -101,6 +116,7 @@ const toDestination = true
  * @returns {object} - Returns a boolean: true if successful, or throws and error if failed
  */
 const prepare = async (error, messages) => {
+  const tick = performance.now()
   const location = { module: 'PrepareHandler', method: '', path: '' }
   const histTimerEnd = Metrics.getHistogram(
     'transfer_prepare',
@@ -145,6 +161,8 @@ const prepare = async (error, messages) => {
       ['success', 'funcName']
     ).startTimer()
 
+    timingsPrepareBeforeDuplicateCheck.addDatapoint(performance.now() - tick)
+
     // ### Following has been commented out to test the Insert only algorithm for duplicate-checks
     // const { hasDuplicateId, hasDuplicateHash } = await Comparators.duplicateCheckComparator(transferId, payload, TransferService.getTransferDuplicateCheck, TransferService.saveTransferDuplicateCheck)
     let { hasDuplicateId, hasDuplicateHash } = { hasDuplicateId: true, hasDuplicateHash: true } // lets assume the worst case
@@ -170,6 +188,9 @@ const prepare = async (error, messages) => {
       hasDuplicateId = tempHasDuplicateId // overriding results to false in the advent there is any errors since we cant have duplicate transferIds
       hasDuplicateHash = tempHasDuplicateHash // overriding results to false in the advent there is any errors since we have not compared against any existing hashes
     }
+
+    timingsPrepareBeforeMainIf.addDatapoint(performance.now() - tick)
+
 
     histTimerDuplicateCheckEnd({ success: true, funcName: 'prepare_duplicateCheckComparator' })
     if (hasDuplicateId && hasDuplicateHash) {
@@ -233,12 +254,18 @@ const prepare = async (error, messages) => {
       }
       throw fspiopError
     } else { // !hasDuplicateId
+      timingsPrepareBeforeValidation.addDatapoint(performance.now() - tick)
       const { validationPassed, reasons } = await Validator.validateByName(payload, headers)
       if (validationPassed) {
+        const tick2 = performance.now()
+
+
         Logger.info(Util.breadcrumb(location, { path: 'validationPassed' }))
         try {
           Logger.info(Util.breadcrumb(location, 'saveTransfer'))
+          timingsPrepareValidationPassed.addDatapoint(performance.now() - tick)
           await TransferService.prepare(payload)
+          timingsPrepareValidationPassedSent.addDatapoint(performance.now() - tick)
         } catch (err) {
           Logger.info(Util.breadcrumb(location, `callbackErrorInternal1--${actionLetter}6`))
           Logger.error(`${Util.breadcrumb(location)}::${err.message}`)
@@ -265,6 +292,9 @@ const prepare = async (error, messages) => {
           await proceedToPosition(Config.KAFKA_CONFIG, params, { consumerCommit, eventDetail, toDestination })
         }
         histTimerEnd({ success: true, fspId: Config.INSTRUMENTATION_METRICS_LABELS.fspId })
+
+        timingsPrepare.addDatapoint(performance.now() - tick)
+
         return true
       } else {
         Logger.error(Util.breadcrumb(location, { path: 'validationFailed' }))
@@ -309,6 +339,8 @@ const prepare = async (error, messages) => {
       }
     }
   } catch (err) {
+    console.log('crash')
+
     histTimerEnd({ success: false, fspId: Config.INSTRUMENTATION_METRICS_LABELS.fspId })
     const fspiopError = ErrorHandler.Factory.reformatFSPIOPError(err)
     Logger.error(`${Util.breadcrumb(location)}::${err.message}--P0`)
